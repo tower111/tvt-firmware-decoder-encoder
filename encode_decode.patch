@@ -1,0 +1,100 @@
+diff --git a/squashfs-tools/Makefile b/squashfs-tools/Makefile
+index a1a5ae7..c72dd15 100755
+--- a/squashfs-tools/Makefile
++++ b/squashfs-tools/Makefile
+@@ -34,7 +34,7 @@ GZIP_SUPPORT = 1
+ # To build install the library and uncomment
+ # the XZ_SUPPORT line below.
+ #
+-#XZ_SUPPORT = 1
++XZ_SUPPORT = 1
+ 
+ # Enable support for OpenWrt extended compression options by uncommenting
+ # next line.  Do not do this unless you understand the implications.
+@@ -216,7 +216,7 @@ UNSQUASHFS_OBJS = unsquashfs.o unsquash-1.o unsquash-2.o unsquash-3.o \
+ 	unsquash-4.o unsquash-123.o unsquash-34.o unsquash-1234.o unsquash-12.o \
+ 	swap.o compressor.o unsquashfs_info.o date.o
+ 
+-CFLAGS ?= -O2
++CFLAGS ?= -O0 -g
+ CFLAGS += $(EXTRA_CFLAGS) $(INCLUDEDIR) -D_FILE_OFFSET_BITS=64 \
+ 	-D_LARGEFILE_SOURCE -D_GNU_SOURCE -DCOMP_DEFAULT=\"$(COMP_DEFAULT)\" \
+ 	-Wall
+diff --git a/squashfs-tools/xz_wrapper.c b/squashfs-tools/xz_wrapper.c
+index 242c94f..b0711b1 100644
+--- a/squashfs-tools/xz_wrapper.c
++++ b/squashfs-tools/xz_wrapper.c
+@@ -26,6 +26,9 @@
+ #include <string.h>
+ #include <stdlib.h>
+ #include <lzma.h>
++#include <sys/mman.h>
++#include <fcntl.h>
++#include <unistd.h>
+ 
+ #include "squashfs_fs.h"
+ #include "xz_wrapper.h"
+@@ -446,7 +449,7 @@ static int xz_compress(void *strm, void *dest, void *src,  int size,
+ 	for(i = 0; i < stream->filters; i++) {
+ 		struct filter *filter = &stream->filter[i];
+ 
+-		if(lzma_lzma_preset(&stream->opt, LZMA_PRESET_DEFAULT))
++		if(lzma_lzma_preset(&stream->opt, LZMA_PRESET_DEFAULT))//设置预设级别
+ 			goto failed;
+ 
+ 		stream->opt.dict_size = stream->dictionary_size;
+@@ -469,9 +472,22 @@ static int xz_compress(void *strm, void *dest, void *src,  int size,
+ 	 	 */
+ 		return 0;
+ 
++	size_t new_size=selected->length+4+6;
++	char * new_buff=0;
++	new_buff=mmap(NULL,((new_size/1024)+1)*1024,PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++
++	const char* new_header = "\xe2\x74\x56\x74\x00\x50\x4b\x47\xb3\xe3";
++	const size_t new_header_size = 10;
++	const char* new_tail="\x05\xc5\x00\x74\x56\x74\x5e\x00";
++	memcpy(new_buff,new_header,new_header_size);//tvt头
++	memcpy(new_buff+new_header_size,selected->buffer+5,selected->length-2-5);//拷贝除xz头尾的剩余内容
++	memcpy(new_buff+new_header_size+selected->length-2-5,new_tail,8);//拷贝tvt尾
++	// free(selected->buffer);
++	selected->buffer=new_buff;
++	selected->length=new_size;
+ 	if(selected->buffer != dest)
+ 		memcpy(dest, selected->buffer, selected->length);
+-
++	
+ 	return (int) selected->length;
+ 
+ failed:
+@@ -490,6 +506,30 @@ static int xz_uncompress(void *dest, void *src, int size, int outsize,
+ 	size_t src_pos = 0;
+ 	size_t dest_pos = 0;
+ 	uint64_t memlimit = MEMLIMIT;
++	
++        //
++	// tvt patch start
++        //
++
++        uint8_t *src_bytes = src;
++        src_bytes += 5;
++         
++        src_bytes[0] = 0xfd;  //替换tvt头尾xz头
++        src_bytes[1] = 0x37;
++        src_bytes[2] = 0x7a;
++        src_bytes[3] = 0x58;
++        src_bytes[4] = 0x5a;
++        
++        size -= 10;  //为了找到xz头的后续字段
++        
++        src_bytes[size-2] = 0x59; //设置结尾
++        src_bytes[size-1] = 0x5a;
++        
++        src = src_bytes;
++        
++        //
++	// tvt patch end
++        //
+ 
+ 	lzma_ret res = lzma_stream_buffer_decode(&memlimit, 0, NULL,
+ 			src, &src_pos, size, dest, &dest_pos, outsize);
