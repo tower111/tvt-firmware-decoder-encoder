@@ -1,6 +1,33 @@
-# tvt内核获取
+# tvt固件加解密与调试
 
-在获取设备shell时遇到了一些问题，希望得到感兴趣大佬们的指点23333
+## 目录
+
+-   [固件分析](#固件分析)
+    -   [通过对比正常编译的linux内核看看有什么区别](#通过对比正常编译的linux内核看看有什么区别)
+-   [xz分析分析](#xz分析分析)
+    -   [xz文件结构](#xz文件结构)
+    -   [xz源码分析](#xz源码分析)
+-   [二进制文件分析](#二进制文件分析)
+-   [解压](#解压)
+-   [方案2：用qiling启动解密程序解密](#方案2用qiling启动解密程序解密)
+-   [得到内核elf文件](#得到内核elf文件)
+-   [得到文件系统](#得到文件系统)
+-   [总结](#总结)
+-   [现有解压方案](#现有解压方案)
+-   [植入后门](#植入后门)
+    -   [生成后门](#生成后门)
+    -   [打包固件](#打包固件)
+-   [关闭看门狗](#关闭看门狗)
+    -   [方案1（修改二进制文件，由于检测比较多，修改起来比较麻烦，最终没成功）](#方案1修改二进制文件由于检测比较多修改起来比较麻烦最终没成功)
+    -   [方案2 找现有的关闭方法](#方案2-找现有的关闭方法)
+-   [一些失败记录](#一些失败记录)
+    -   [植入后门（失败）](#植入后门失败)
+    -   [编译buildroot](#编译buildroot)
+    -   [失败总结](#失败总结)
+-   [打包](#打包)
+-   [问题](#问题)
+
+其中涉及文件参见 [https://github.com/tower111/tvt-firmware-decoder-encoder](https://github.com/tower111/tvt-firmware-decoder-encoder "https://github.com/tower111/tvt-firmware-decoder-encoder")
 
 ## 固件分析
 
@@ -100,12 +127,12 @@ bootargs
 
 uImage、zImage、vmlinux关系如下[https://zhuanlan.zhihu.com/p/466226177](https://zhuanlan.zhihu.com/p/466226177 "https://zhuanlan.zhihu.com/p/466226177")
 
-![](image/image_lYp-Czj54U.png)
+![](image/image_0fgSqKZPIO.png)
 
 uboot提供了mkimage工具，来将kernel制作为uboot可以识别的格式，将生成的文件称之为uImage。 &#x20;
 uboot支持两种类型的uImage
 
-![](image/image_cI6znztL-w.png)
+![](image/image_oqIzJsiX8t.png)
 
 这里使用的是Legacy-uImage，用file命令可以看出来
 
@@ -175,11 +202,11 @@ base) ➜  linux-4.9.37 file ./uImage
 
     编译的uImage开头如下图所示
 
-    ![](image/image_UzFUA1N9Ep.png)
+    ![](image/image_fGUHYL6_3i.png)
 
     从tvt nvr设备中取出的固件经过搜索字符串，找到了类似的位置，但是这里明显被厂商修改了。猜测是修改了标准的xz解密程序。
 
-    ![](image/image_r-W18EC0lK.png)
+    ![](image/image_EZBKFHzjuQ.png)
 
 查看内核中xz解包程序的源码lib/decompress\_unxz.c，在编译的uImage中也可以找到对应内容，通过对比源码，找到dec\_main函数
 
@@ -195,29 +222,29 @@ static enum xz_ret dec_main(struct xz_dec *s, struct xz_buf *b)
 
 **.xz**作为.lzma的替代，它的文件结构更复杂，包含的元信息更多。.xz文件可以由多个Stream和Stream Padding组成，但通常只有一个Stream。[http://maruchen.github.io/2015/03/The base knowledge about 7z, xz and lzma/](<http://maruchen.github.io/2015/03/The base knowledge about 7z, xz and lzma/> "http://maruchen.github.io/2015/03/The base knowledge about 7z, xz and lzma/")
 
-![](image/image_ZEhDbDwHh1.png)
+![](image/image_Rg8LxY9DCE.png)
 
 stream格式如下
 
-![](image/image_WymjFIp5Th.png)
+![](image/image_cQPWd8860_.png)
 
 Stream Header包含magic number（FD 37 7A 58 5A 00）、Stream Flags以及CRC校验。其中Stream Flgas是CRC校验的类型。
 
-![](image/image_1TsNButCnR.png)
+![](image/image_TmQevBbKXH.png)
 
 Block包含Block Header和压缩数据。Block Header包含了压缩算法（filter）的数目和属性、数据长度以及CRC校验。
 
-![](image/image_9Wwt_P3q5J.png)
+![](image/image_dbuoY1cnlR.png)
 
-![](image/image_3lnOyFWV1p.png)
+![](image/image_5OqcSktScI.png)
 
 index作用和结构
 
-![](image/image_BMs7uReIie.png)
+![](image/image_YciqXBhB0F.png)
 
 Stream Footer的结构如下。其中Backward Size是Index模块的大小，用来在从后向前处理时快速定位到Index的位置。magic为 59 5a （YZ）
 
-![](image/image_hXvZ9947Kd.png)
+![](image/image_ur4z6krdrz.png)
 
 ### xz源码分析
 
@@ -587,11 +614,11 @@ with open("result.xz",'wb') as fd:
 
 但是解压之后只能得到目录
 
-![](image/image_MW5ZlO-3rr.png)
+![](image/image_tvaS2qJc_j.png)
 
 但是vmlinux中的一些关键字符串是存在的，还需要添加一些内容
 
-![](image/image_44Acb6q5Jq.png)
+![](image/image_py6pajEBL6.png)
 
 ## 方案2：用qiling启动解密程序解密
 
@@ -626,11 +653,11 @@ decompress_kernel(unsigned long output_start, unsigned long free_mem_ptr_p,
 
 在固件中的uImage对应如下
 
-![](image/image_wiUsWBGsyS.png)
+![](image/image_JqlQ2P1Rj2.png)
 
 为了进一步确认没有被厂商自定义，编译了同版本的linux内核，进行对比，确认没有经过自定义（实际上这一步应该不会自定义，因为内核压缩包有crc校验，修改会不通过）
 
-![](image/image_x6a0GbhEZ9.png)
+![](image/image_4qzC7BNMq2.png)
 
 启动qiling
 
@@ -760,7 +787,7 @@ if __name__ == "__main__":
 
 得出的文件和前面得到的类似
 
-![](image/image_RniY_PAxdt.png)
+![](image/image_N3POC_SO2l.png)
 
 ## 得到内核elf文件
 
@@ -788,7 +815,184 @@ xz在实现时由于类似的处理逻辑较多，经过编译器优化后，ida
 
 [https://github.com/zb3/tvt-firmware-decryptor/tree/master](https://github.com/zb3/tvt-firmware-decryptor/tree/master "https://github.com/zb3/tvt-firmware-decryptor/tree/master")
 
-## 植入后门（失败）
+## 植入后门
+
+植入后门的方案有四种
+
+-   1、编译后门文件，编译libuClic版本的文件需要使用buildroot，细节可以参考失败案例
+-   2、用msf生成后门文件，替换掉内部的一些二进制文件，通过web访问执行该文件即可得到shell。由于固件没有telnet等命令，这种方法只需要执行一个小文件，对固件加载影响较小。
+-   3、用msf生成一段后门shellcode，然后用idapython修改二进制文件的一段代码，这种方法失败的可能较大，但是不影响固件的大小。
+-   放进去一个busybox，然后在启动脚本里放入启动telnetd的命令
+    ```bash
+    /me/busybox.armel telnetd -l  /bin/sh -p 89 &
+    ```
+
+### 生成后门
+
+使用msfvenom生成后门程序方法如下
+
+```bash
+msfvenom -p linux/armle/shell_bind_tcp -f elf -o aa
+```
+
+测试payload，一端启动后门程序
+
+```bash
+chmod 777 ./aa
+qemu-arm ./aa
+```
+
+一段启动msf连接程序
+
+```bash
+msfconsole
+use linux/armle/shell_bind_tcp
+set RHOST 127.0.0.1
+exploit
+ session -l  查看连接
+ sessions -i 1 进入连接
+
+```
+
+### 打包固件
+
+原始固件结构
+
+```bash
+226464        0x374A0         CRC32 polynomial table, little endian
+301628        0x49A3C         JPEG image data, JFIF standard 1.01
+303285        0x4A0B5         JPEG image data, JFIF standard 1.01
+393272        0x60038         PNG image, 350 x 55, 8-bit/color RGBA, non-interlaced
+393427        0x600D3         Zlib compressed data, default compression
+398580        0x614F4         PNG image, 693 x 236, 8-bit/color RGBA, non-interlaced
+517088        0x7E3E0         XML document, version: "1.0"
+524288        0x80000         JPEG image data, JFIF standard 1.01
+524318        0x8001E         TIFF image data, big-endian, offset of first image directory: 8
+655416        0xA0038         PNG image, 350 x 55, 8-bit/color RGBA, non-interlaced
+655571        0xA00D3         Zlib compressed data, default compression
+660724        0xA14F4         PNG image, 693 x 236, 8-bit/color RGBA, non-interlaced
+779232        0xBE3E0         XML document, version: "1.0"
+917504        0xE0000         uImage header, header size: 64 bytes, header CRC: 0xFDB88F62, created: 2021-08-28 07:51:25, image size: 2156739 bytes, Data Address: 0x80008000, Entry Point: 0x80008000, data CRC: 0x2E36A415, OS: Linux, CPU: ARM, image type: OS Kernel Image, compression type: none, image name: "Linux-4.9.37"
+917568        0xE0040         Linux kernel ARM boot executable zImage (little-endian)
+3064720       0x2EC390        Flattened device tree, size: 9587 bytes, version: 17
+3145728       0x300000        Squashfs filesystem, little endian, version 4.0, compression:xz, size: 20383964 bytes, 1711 inodes, blocksize: 1048576 bytes, created: 2023-02-08 05:27:36
+27262976      0x1A00000       JFFS2 filesystem, little endian
+27263816      0x1A00348       Zlib compressed data, compressed
+27264336      0x1A00550       Zlib compressed data, compressed
+27264900      0x1A00784       Zlib compressed data, compressed
+27265464      0x1A009B8       Zlib compressed data, compressed
+```
+
+生成新固件
+
+拷贝第一段内容，count为Squashfs文件系统之前的部分
+
+```bash
+dd if=../MX25L25633F@WSON8_20230829_113609.BIN bs=1 count=3145728 of=shell_firm.fls
+```
+
+取出文件系统
+
+```bash
+dd if=../MX25L25633F@WSON8_20230829_113609.BIN bs=1 skip=3145728 count=20383964 of=Squashfs
+```
+
+放入启动脚本命令 ，在run.sh文件中可以看到启动核心服务，在这之前添加上后门启动命令
+
+![](image/image_TPTCF0M7mc.png)
+
+重新打包文件系统，这需要修改mksquashfs的源码，具体修改内容可以参考下文失败过程中的打包
+
+```bash
+../exttactor/tvt-firmware-decryptor/squashfs-tools/squashfs-tools/mksquashfs ./squashfs-root ./squashfs-root.xz -comp xz
+
+```
+
+拷贝文件系统到新的固件中，这里最好指定count（用binwalk可查看）
+
+```bash
+dd if=./squashfs-root.xz bs=1 count=36358050 skip=0  seek=3145728 of=shell_firm.fls
+```
+
+拷贝剩余部分到固件中，skip和seek都为文件系统后续内容的偏移，这部分偏移是在固件内写死的，文件系统大小不能太大。
+
+count可以通过十六进制编辑器和binwalk地址相减得到
+
+```bash
+dd if=../MX25L25633F@WSON8_20230829_113609.BIN bs=1 skip=27262976 count=6291424 seek=27262976 of=./shell_firm.fls
+```
+
+**注意：**
+
+固件大小要小于它到后面内容这段空间大小(23M)，生成的固件可以用binwalk校验一下，如果squashfs的尾被覆盖掉binwalk将检查不到squashfs文件系统
+
+```bash
+>>> (0x1A00000-0x2EC390)/1024/1024
+23.077255249023438
+```
+
+## 关闭看门狗
+
+通过查找关键字可以看到关键文件
+
+```bash
+(base) ➜  squashfs-root grep -nr "watchdog" .
+Binary file ./qemu-arm-static matches
+./mnt/mtd/op_wdt.sh:214:  echo a > /dev/watchdog
+./mnt/mtd/op_wdt.sh:220:  echo V > /dev/watchdog
+./mnt/mtd/language/Portuguese(Standard).ini:2795:IDCS_SEND_HEARTBEAT="Enviar watchdog"
+Binary file ./mnt/mtd/libhi35312.so matches
+Binary file ./mnt/mtd/modules/extdrv/wdt.ko matches
+Binary file ./mnt/mtd/modules/hi3536dv100_chnl.ko matches
+./mnt/mtd/upgrade.sh:128:  cp $RCODE /sbin/watchdog -fd /tmp/bin/ >& /dev/null
+Binary file ./me/busybox.armel matches
+Binary file ./me/gdb.armel matches
+./tmp/upgrade.sh:128:  cp $RCODE /sbin/watchdog -fd /tmp/bin/ >& /dev/null
+(base) ➜  squashfs-root grep -nr "/dev/watchdog" .
+./mnt/mtd/op_wdt.sh:214:  echo a > /dev/watchdog
+./mnt/mtd/op_wdt.sh:220:  echo V > /dev/watchdog
+Binary file ./mnt/mtd/libhi35312.so matches
+```
+
+./mnt/mtd/modules/extdrv/wdt.ko为内核模块，rmmod -f wdt不能卸载该设备
+
+### 方案1（修改二进制文件，由于检测比较多，修改起来比较麻烦，最终没成功）
+
+由于存在看门狗，在附加调试器之后设备会重启。
+
+通过分析./mnt/mtd/libhi35312.so文件，找到了设置看门狗的位置，
+
+![](image/image_754s_lxjRy.png)
+
+在wdt文件中对应这里，设置心跳时间
+
+![](image/image_un5iZpR8n0.png)
+
+修改该函数，设置超时时间（这里设置失败了，可能是0xC0000000太大了，设置成一个正数也还是不行）
+
+![](image/image_j4ydBOCxwr.png)
+
+### 方案2 找现有的关闭方法
+
+在op\_wdt.sh提供了关闭函数
+
+![](image/image_d_oa674c-A.png)
+
+在start.sh文件中执行了关闭，只需要设置NEED\_CLOSE\_DOG为0即可关闭看门狗
+
+```bash
+cd /mnt/mtd && ./run.sh &
+
+if [ $NEED_CLOSE_DOG -eq 1 ] ; then
+  sleep $RCODE 40 && cd /mnt/mtd && ./op_wdt.sh close $RCODE
+fi
+
+exit 0
+```
+
+## 一些失败记录
+
+### 植入后门（失败）
 
 方法
 
@@ -898,4 +1102,12 @@ seek始终为输出文件的末尾，skip可以通过binwalk查看
 dd if=../MX25L25633F@WSON8_20230829_113609.BIN bs=1 skip=27262976 seek=39274758 of=new_firm.BIN
 ```
 
+## 问题
+
+固件中加入了安全码机制，是修改了busybox，自己放入的busybox命令可以执行，但是想执行自带的busybox命令需要安全码，可以有效限制命令注入漏洞。
+
+希望有大佬们多多交流绕过方法。
+
 [tvt漏洞分析](https://www.wolai.com/jz5rx8GRUwmDQN3r1ykK9V "tvt漏洞分析")
+
+[shell获取](https://www.wolai.com/tJ6ujNyMwwuoARKeWst37u "shell获取")
